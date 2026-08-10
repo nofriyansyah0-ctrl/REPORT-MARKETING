@@ -84,7 +84,7 @@ app = FastAPI(title="TikTok Live Competitor Monitor", lifespan=lifespan)
 # CORS -- longgarkan origin frontend sesuai domain Vercel kamu nanti
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ganti dengan domain Vercel spesifik saat production
+    allow_origins=["https://dashboard-chi-sooty-60.vercel.app"],  # ganti dengan domain Vercel spesifik saat production
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
