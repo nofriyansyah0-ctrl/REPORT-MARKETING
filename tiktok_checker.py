@@ -73,7 +73,12 @@ async def check_single_account(username: str) -> dict:
             logger.error(f"[{username}] error saat cek status: {e}")
 
     finally:
-        await client.web.close()
+        try:
+            await client.web.close()
+        except Exception as e:
+            # Kalau sesi belum sempat terbuka (mis. request pertama sudah gagal),
+            # close() bisa error -- ini tidak fatal, cukup dicatat saja.
+            logger.debug(f"[{username}] close() gagal (biasanya tidak masalah): {e}")
 
     return result
 
