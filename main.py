@@ -35,14 +35,35 @@ ACCOUNTS_FILE = Path(__file__).parent / "accounts.json"
 
 
 def load_accounts() -> list:
+    """
+    Baca daftar akun dari accounts.json.
+    Mendukung 2 format:
+    - Format baru (dengan region): [{"username": "...", "region": "jogja"}, ...]
+    - Format lama (list string saja): ["user1", "user2", ...] -> otomatis
+      dianggap region "jogja" supaya tetap kompatibel.
+    """
     with open(ACCOUNTS_FILE, "r") as f:
-        return json.load(f)["accounts"]
+        raw = json.load(f)["accounts"]
+
+    accounts = []
+    for item in raw:
+        if isinstance(item, str):
+            accounts.append({"username": item, "region": "jogja"})
+        else:
+            accounts.append({
+                "username": item["username"],
+                "region": item.get("region", "jogja"),
+            })
+    return accounts
 
 
 async def run_check_cycle():
     """Cek semua akun lalu simpan hasilnya ke database."""
-    usernames = load_accounts()
-    logger.info(f"Mulai pengecekan {len(usernames)} akun...")
+    accounts = load_accounts()
+    logger.info(f"Mulai pengecekan {len(accounts)} akun...")
+
+    usernames = [a["username"] for a in accounts]
+    region_map = {a["username"]: a["region"] for a in accounts}
 
     results = await check_all_accounts(usernames)
 
@@ -53,6 +74,7 @@ async def run_check_cycle():
         database.upsert_status(
             username=r["username"],
             is_live=r["is_live"],
+            region=region_map.get(r["username"], "jogja"),
             title=r["title"],
             viewer_count=r["viewer_count"],
             avatar_url=r["avatar_url"],
@@ -84,7 +106,7 @@ app = FastAPI(title="TikTok Live Competitor Monitor", lifespan=lifespan)
 # CORS -- longgarkan origin frontend sesuai domain Vercel kamu nanti
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://dashboard-chi-sooty-60.vercel.app"],  # ganti dengan domain Vercel spesifik saat production
+    allow_origins=["*"],  # ganti dengan domain Vercel spesifik saat production
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -103,7 +125,8 @@ def get_history_all():
 @app.get("/api/history/{username}")
 def get_history_for_user(username: str):
     accounts = load_accounts()
-    if username not in accounts:
+    usernames = [a["username"] for a in accounts]
+    if username not in usernames:
         raise HTTPException(status_code=404, detail="Akun tidak ada di daftar pantauan")
     return {"history": database.get_history(username=username)}
 
