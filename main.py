@@ -139,6 +139,17 @@ def get_history_for_user(username: str):
     return {"history": database.get_history(username=username)}
 
 
+@app.get("/api/leaderboard")
+def get_leaderboard(days: int = 7, region: str = "all"):
+    """
+    Ranking akun berdasarkan aktivitas live dalam N hari terakhir.
+    Query params: ?days=7&region=jogja (region opsional, default 'all')
+    """
+    if days not in (7, 30):
+        raise HTTPException(status_code=400, detail="Parameter 'days' harus 7 atau 30")
+    return {"leaderboard": database.get_leaderboard(days=days, region=region)}
+
+
 @app.post("/api/check-now")
 async def trigger_manual_check():
     """Untuk trigger cek manual dari dashboard (tombol refresh), di luar jadwal."""
