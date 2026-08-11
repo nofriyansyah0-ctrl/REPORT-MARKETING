@@ -24,10 +24,8 @@
 
     { "username": "pmbums", "region": "luar_jogja" },
     { "username": "fakultaspsikologiunmuha", "region": "luar_jogja" },
-    { "username": "universitasmethodistindonesia", "region": "luar_jogja" },
-    { "username": "pmbunivet", "region": "luar_jogja" },
+    { "username": "kampusmethodistindonesia", "region": "luar_jogja" },
     { "username": "pmb.ug", "region": "luar_jogja" },
-    { "username": "um.koe", "region": "luar_jogja" },
     { "username": "umbengkulu", "region": "luar_jogja" },
     { "username": "smbtelkom", "region": "luar_jogja" },
     { "username": "pmb.univpancasila", "region": "luar_jogja" },
@@ -35,8 +33,6 @@
     { "username": "binusonlineofficial", "region": "luar_jogja" },
     { "username": "feb_unissula", "region": "luar_jogja" },
     { "username": "pmbupgris", "region": "luar_jogja" },
-    { "username": "uniska_kediri_official", "region": "luar_jogja" },
-    { "username": "teknikperkeretaapian", "region": "luar_jogja" },
     { "username": "universitaspertamina", "region": "luar_jogja" },
     { "username": "unnes_semarang", "region": "luar_jogja" },
     { "username": "pmbunsiq", "region": "luar_jogja" },
@@ -45,7 +41,6 @@
     { "username": "unismuhmakassar", "region": "luar_jogja" },
     { "username": "admisiumsida", "region": "luar_jogja" },
     { "username": "aset.ub", "region": "luar_jogja" },
-    { "username": "uit.official", "region": "luar_jogja" },
     { "username": "umbandung", "region": "luar_jogja" }
   ]
 }
