@@ -4,12 +4,19 @@ Lapisan penyimpanan data menggunakan SQLite.
 Menyimpan status terkini tiap akun + riwayat sesi live.
 """
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "monitor.db"
+# Lokasi file database bisa diatur lewat environment variable DB_PATH.
+# Ini penting untuk Railway: kalau ada Volume yang di-mount (misal ke
+# /data), set DB_PATH=/data/monitor.db supaya data TIDAK hilang setiap
+# kali redeploy. Kalau env var tidak diset (misal saat jalan di
+# komputer lokal), otomatis pakai file biasa di folder backend seperti
+# sebelumnya -- tidak ada yang berubah untuk pemakaian lokal.
+DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent / "monitor.db")))
 
 
 @contextmanager
