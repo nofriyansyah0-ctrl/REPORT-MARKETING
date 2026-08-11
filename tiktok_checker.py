@@ -47,15 +47,34 @@ async def check_single_account(username: str) -> dict:
         if is_live:
             try:
                 room_info = await client.web.fetch_room_info(unique_id=username)
-                # Struktur response TikTok bisa nested; ambil dengan aman.
-                data = room_info.get("data", room_info) if isinstance(room_info, dict) else {}
+                # fetch_room_info() dari library sudah mengembalikan objek "data"
+                # langsung (bukan nested lagi), tapi kita tetap jaga-jaga.
+                data = room_info if isinstance(room_info, dict) else {}
+                if "data" in data and isinstance(data["data"], dict):
+                    data = data["data"]
+
                 result["title"] = data.get("title")
-                stats = data.get("stats") or {}
-                result["viewer_count"] = stats.get("user_count")
+
+                # Viewer count -- TikTok kadang taruh field ini di lokasi
+                # berbeda tergantung versi endpoint, jadi dicoba beberapa
+                # kemungkinan lokasi secara berurutan.
+                viewer_count = (
+                    data.get("user_count")
+                    or (data.get("stats") or {}).get("user_count")
+                    or (data.get("room") or {}).get("user_count")
+                )
+                result["viewer_count"] = viewer_count
+
                 owner = data.get("owner") or {}
                 avatar = owner.get("avatar_thumb") or {}
                 url_list = avatar.get("url_list") or []
                 result["avatar_url"] = url_list[0] if url_list else None
+
+                if viewer_count is None:
+                    # Belum ketemu field-nya -- catat key yang tersedia di log
+                    # supaya gampang didiagnosis tanpa perlu tebak-tebakan lagi.
+                    logger.info(f"[{username}] viewer_count tidak ditemukan. "
+                                f"Key tersedia di data: {list(data.keys())}")
             except Exception as e:
                 logger.warning(f"[{username}] gagal ambil detail room: {e}")
 
