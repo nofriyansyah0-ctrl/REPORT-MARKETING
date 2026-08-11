@@ -70,6 +70,14 @@ async def run_check_cycle():
     for r in results:
         if r["error"]:
             logger.warning(f"  {r['username']}: ERROR - {r['error']}")
+            # Tetap catat "percobaan terakhir" meski gagal, supaya
+            # dashboard tahu data ini mungkin usang (bukan diam-diam
+            # menampilkan status lama seolah baru saja dicek).
+            database.touch_attempt(
+                username=r["username"],
+                region=region_map.get(r["username"], "jogja"),
+                error_message=r["error"],
+            )
             continue
         database.upsert_status(
             username=r["username"],
