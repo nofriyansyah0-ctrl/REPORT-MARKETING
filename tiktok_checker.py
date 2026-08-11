@@ -61,6 +61,19 @@ async def _check_once(username: str) -> dict:
 
                 result["title"] = data.get("title")
 
+                # Verifikasi silang: field "status" pada data room ini
+                # (bukan hasil fetch_is_live() yang dipakai di atas) kadang
+                # lebih akurat/terkini. Nilai status == 4 artinya sesi live
+                # sudah RESMI berakhir menurut TikTok -- kalau ternyata
+                # begitu, timpa is_live jadi False meskipun fetch_is_live()
+                # tadi sempat bilang True (mengurangi kasus "masih ke-detect
+                # live padahal sudah selesai").
+                room_status = data.get("status")
+                if room_status == 4:
+                    result["is_live"] = False
+                    logger.info(f"[{username}] fetch_is_live=True tapi "
+                                f"room status=4 (sudah berakhir) -- dikoreksi jadi offline")
+
                 # Viewer count -- CATATAN: jumlah penonton real-time TikTok
                 # kemungkinan besar TIDAK tersedia lewat endpoint statis ini;
                 # itu data yang biasanya cuma dikirim lewat koneksi live
