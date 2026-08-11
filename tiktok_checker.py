@@ -25,6 +25,12 @@ logger = logging.getLogger("tiktok_checker")
 # permintaan yang terlalu rapat mulai memicu error/rate-limit dari TikTok.
 DELAY_BETWEEN_ACCOUNTS = 3
 
+# Berapa banyak akun dicek BERSAMAAN (paralel). Semakin tinggi = siklus
+# lebih cepat, tapi juga makin "berisik" ke mata TikTok (potensi rate-limit
+# lebih tinggi). 5 adalah titik tengah yang cukup aman untuk skala puluhan
+# akun sambil tetap jauh lebih cepat dari cara berurutan sebelumnya.
+CONCURRENCY = 5
+
 # Kalau pengecekan sebuah akun gagal karena error tak dikenal (bukan
 # "offline" atau "tidak ditemukan" yang sudah pasti), coba ulang sekali
 # lagi sebelum benar-benar menyerah -- banyak kegagalan sifatnya cuma
@@ -150,12 +156,24 @@ async def check_single_account(username: str) -> dict:
 
 async def check_all_accounts(usernames: list) -> list:
     """
-    Cek status semua akun secara berurutan (bukan paralel) dengan jeda,
-    untuk menghindari rate-limit dari TikTok.
+    Cek status semua akun dengan PARALEL TERBATAS: beberapa akun dicek
+    bersamaan (diatur oleh CONCURRENCY), bukan satu-satu berurutan seperti
+    sebelumnya. Ini penting supaya satu siklus penuh tidak memakan waktu
+    terlalu lama seiring bertambahnya jumlah akun yang dipantau -- kalau
+    berurutan, dengan puluhan akun siklusnya bisa menit-menitan, bikin
+    status di dashboard telat jauh dari kondisi aslinya di TikTok.
+
+    Tetap ada jeda kecil sebelum tiap request dimulai (bukan menembak
+    semua sekaligus) supaya beban ke TikTok tetap terkendali.
     """
-    results = []
-    for username in usernames:
-        result = await check_single_account(username)
-        results.append(result)
-        await asyncio.sleep(DELAY_BETWEEN_ACCOUNTS)
-    return results
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+
+    async def _bounded_check(username: str, index: int) -> dict:
+        async with semaphore:
+            # Jeda kecil bertahap supaya permintaan tidak menumpuk persis
+            # di detik yang sama walau berjalan paralel.
+            await asyncio.sleep((index % CONCURRENCY) * 0.4)
+            return await check_single_account(username)
+
+    tasks = [_bounded_check(username, i) for i, username in enumerate(usernames)]
+    return await asyncio.gather(*tasks)
