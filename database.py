@@ -29,6 +29,7 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS account_status (
                 username TEXT PRIMARY KEY,
+                region TEXT NOT NULL DEFAULT 'jogja',
                 is_live INTEGER NOT NULL DEFAULT 0,
                 title TEXT,
                 viewer_count INTEGER,
@@ -49,7 +50,7 @@ def init_db():
         """)
 
 
-def upsert_status(username: str, is_live: bool, title: str = None,
+def upsert_status(username: str, is_live: bool, region: str = "jogja", title: str = None,
                    viewer_count: int = None, avatar_url: str = None):
     """
     Update status terkini sebuah akun.
@@ -68,9 +69,9 @@ def upsert_status(username: str, is_live: bool, title: str = None,
         if row is None:
             conn.execute("""
                 INSERT INTO account_status
-                    (username, is_live, title, viewer_count, avatar_url, last_checked, live_since)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (username, int(is_live), title, viewer_count, avatar_url, now,
+                    (username, region, is_live, title, viewer_count, avatar_url, last_checked, live_since)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (username, region, int(is_live), title, viewer_count, avatar_url, now,
                   now if is_live else None))
         else:
             if is_live and not was_live:
@@ -82,14 +83,14 @@ def upsert_status(username: str, is_live: bool, title: str = None,
 
             conn.execute("""
                 UPDATE account_status
-                SET is_live = ?, title = ?, viewer_count = ?, avatar_url = ?,
+                SET region = ?, is_live = ?, title = ?, viewer_count = ?, avatar_url = ?,
                     last_checked = ?,
                     live_since = CASE
                         WHEN ? = 1 THEN COALESCE(?, live_since)
                         ELSE NULL
                     END
                 WHERE username = ?
-            """, (int(is_live), title, viewer_count, avatar_url, now,
+            """, (region, int(is_live), title, viewer_count, avatar_url, now,
                   int(is_live), new_live_since, username))
 
         # Kelola riwayat sesi live
