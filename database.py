@@ -42,9 +42,18 @@ def init_db():
                 viewer_count INTEGER,
                 avatar_url TEXT,
                 last_checked TEXT,
+                last_attempt TEXT,
+                last_error TEXT,
                 live_since TEXT
             )
         """)
+        # Migrasi ringan untuk database lama yang belum punya kolom ini
+        # (supaya tidak perlu hapus data lama saat kode di-update).
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(account_status)")}
+        if "last_attempt" not in existing_cols:
+            conn.execute("ALTER TABLE account_status ADD COLUMN last_attempt TEXT")
+        if "last_error" not in existing_cols:
+            conn.execute("ALTER TABLE account_status ADD COLUMN last_error TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS live_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,9 +85,10 @@ def upsert_status(username: str, is_live: bool, region: str = "jogja", title: st
         if row is None:
             conn.execute("""
                 INSERT INTO account_status
-                    (username, region, is_live, title, viewer_count, avatar_url, last_checked, live_since)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (username, region, int(is_live), title, viewer_count, avatar_url, now,
+                    (username, region, is_live, title, viewer_count, avatar_url,
+                     last_checked, last_attempt, last_error, live_since)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            """, (username, region, int(is_live), title, viewer_count, avatar_url, now, now,
                   now if is_live else None))
         else:
             if is_live and not was_live:
@@ -91,13 +101,13 @@ def upsert_status(username: str, is_live: bool, region: str = "jogja", title: st
             conn.execute("""
                 UPDATE account_status
                 SET region = ?, is_live = ?, title = ?, viewer_count = ?, avatar_url = ?,
-                    last_checked = ?,
+                    last_checked = ?, last_attempt = ?, last_error = NULL,
                     live_since = CASE
                         WHEN ? = 1 THEN COALESCE(?, live_since)
                         ELSE NULL
                     END
                 WHERE username = ?
-            """, (region, int(is_live), title, viewer_count, avatar_url, now,
+            """, (region, int(is_live), title, viewer_count, avatar_url, now, now,
                   int(is_live), new_live_since, username))
 
         # Kelola riwayat sesi live
@@ -118,6 +128,37 @@ def upsert_status(username: str, is_live: bool, region: str = "jogja", title: st
                 SET peak_viewer_count = MAX(COALESCE(peak_viewer_count, 0), ?)
                 WHERE username = ? AND ended_at IS NULL
             """, (viewer_count, username))
+
+
+def touch_attempt(username: str, region: str, error_message: str):
+    """
+    Dipanggil saat pengecekan sebuah akun GAGAL (error/timeout/rate-limit).
+    Tidak mengubah status is_live/title/viewer_count (karena kita tidak
+    tahu kondisi terbaru), tapi tetap mencatat KAPAN percobaan terakhir
+    dilakukan dan APA error-nya -- supaya dashboard bisa menunjukkan
+    "data ini mungkin usang" alih-alih diam-diam menampilkan status lama
+    seolah-olah baru.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT username FROM account_status WHERE username = ?", (username,)
+        ).fetchone()
+        if row is None:
+            # Akun belum pernah berhasil dicek sama sekali -- buat entry
+            # kosong supaya tetap muncul di dashboard (offline by default)
+            # dan errornya terlihat, bukan hilang sama sekali dari daftar.
+            conn.execute("""
+                INSERT INTO account_status
+                    (username, region, is_live, last_attempt, last_error)
+                VALUES (?, ?, 0, ?, ?)
+            """, (username, region, now, error_message))
+        else:
+            conn.execute("""
+                UPDATE account_status
+                SET last_attempt = ?, last_error = ?
+                WHERE username = ?
+            """, (now, error_message, username))
 
 
 def get_all_status():
