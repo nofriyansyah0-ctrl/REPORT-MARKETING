@@ -7,7 +7,7 @@ Menyimpan status terkini tiap akun + riwayat sesi live.
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # Lokasi file database bisa diatur lewat environment variable DB_PATH.
@@ -181,3 +181,47 @@ def get_history(username: str = None, limit: int = 50):
                 SELECT * FROM live_history ORDER BY started_at DESC LIMIT ?
             """, (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_leaderboard(days: int = 7, region: str = None):
+    """
+    Ranking akun berdasarkan aktivitas live dalam N hari terakhir:
+    - session_count: berapa kali mulai live
+    - avg_viewers / max_viewers: dari peak_viewer_count tiap sesi
+    - last_live_at: kapan terakhir kali live
+
+    Cuma menghitung sesi yang MULAI dalam rentang waktu tsb (started_at),
+    termasuk sesi yang masih berlangsung (ended_at masih NULL).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    query = """
+        SELECT
+            lh.username,
+            a.region AS region,
+            a.avatar_url AS avatar_url,
+            COUNT(*) AS session_count,
+            AVG(lh.peak_viewer_count) AS avg_viewers,
+            MAX(lh.peak_viewer_count) AS max_viewers,
+            MAX(lh.started_at) AS last_live_at
+        FROM live_history lh
+        LEFT JOIN account_status a ON a.username = lh.username
+        WHERE lh.started_at >= ?
+    """
+    params = [cutoff]
+
+    if region and region != "all":
+        query += " AND a.region = ?"
+        params.append(region)
+
+    query += " GROUP BY lh.username ORDER BY session_count DESC, avg_viewers DESC"
+
+    with get_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            # Bulatkan rata-rata penonton supaya rapi ditampilkan (mis. 42.3 -> 42)
+            d["avg_viewers"] = round(d["avg_viewers"]) if d["avg_viewers"] is not None else None
+            results.append(d)
+        return results
