@@ -1,6 +1,7 @@
 {
   "accounts": [
     { "username": "manajemenumy", "region": "jogja" },
+    { "username": "admisiumy", "region": "jogja" },
     { "username": "umbyogyakarta", "region": "jogja" },
     { "username": "feb.ujb", "region": "jogja" },
     { "username": "universitas_almaata", "region": "jogja" },
@@ -13,7 +14,6 @@
     { "username": "fisipol.umy", "region": "jogja" },
     { "username": "fh_uii", "region": "jogja" },
     { "username": "pmat_uad", "region": "jogja" },
-    { "username": "admisiumy", "region": "jogja" },
     { "username": "nursing.almaata", "region": "jogja" },
     { "username": "d3bidan.almaata", "region": "jogja" },
     { "username": "stieykpn", "region": "jogja" },
