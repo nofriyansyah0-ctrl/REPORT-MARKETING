@@ -64,6 +64,19 @@ def init_db():
                 title TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS viewer_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                username TEXT NOT NULL,
+                checked_at TEXT NOT NULL,
+                viewer_count INTEGER NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_snapshots_session
+            ON viewer_snapshots(session_id)
+        """)
 
 
 def upsert_status(username: str, is_live: bool, region: str = "jogja", title: str = None,
@@ -111,23 +124,41 @@ def upsert_status(username: str, is_live: bool, region: str = "jogja", title: st
                   int(is_live), new_live_since, username))
 
         # Kelola riwayat sesi live
+        session_id = None
         if is_live and not was_live:
-            conn.execute("""
+            cursor = conn.execute("""
                 INSERT INTO live_history (username, started_at, peak_viewer_count, title)
                 VALUES (?, ?, ?, ?)
             """, (username, now, viewer_count, title))
+            session_id = cursor.lastrowid
         elif not is_live and was_live:
             conn.execute("""
                 UPDATE live_history
                 SET ended_at = ?
                 WHERE username = ? AND ended_at IS NULL
             """, (now, username))
-        elif is_live and was_live and viewer_count is not None:
-            conn.execute("""
-                UPDATE live_history
-                SET peak_viewer_count = MAX(COALESCE(peak_viewer_count, 0), ?)
+        elif is_live and was_live:
+            if viewer_count is not None:
+                conn.execute("""
+                    UPDATE live_history
+                    SET peak_viewer_count = MAX(COALESCE(peak_viewer_count, 0), ?)
+                    WHERE username = ? AND ended_at IS NULL
+                """, (viewer_count, username))
+            row = conn.execute("""
+                SELECT id FROM live_history
                 WHERE username = ? AND ended_at IS NULL
-            """, (viewer_count, username))
+                ORDER BY started_at DESC LIMIT 1
+            """, (username,)).fetchone()
+            session_id = row["id"] if row else None
+
+        # Catat "foto" jumlah penonton di titik waktu ini -- ini yang jadi
+        # dasar grafik Viewer Trend. Cuma dicatat kalau sedang live DAN
+        # angka penontonnya berhasil terbaca (viewer_count tidak None).
+        if is_live and viewer_count is not None and session_id is not None:
+            conn.execute("""
+                INSERT INTO viewer_snapshots (session_id, username, checked_at, viewer_count)
+                VALUES (?, ?, ?, ?)
+            """, (session_id, username, now, viewer_count))
 
 
 def touch_attempt(username: str, region: str, error_message: str):
@@ -225,3 +256,192 @@ def get_leaderboard(days: int = 7, region: str = None):
             d["avg_viewers"] = round(d["avg_viewers"]) if d["avg_viewers"] is not None else None
             results.append(d)
         return results
+
+
+WIB_OFFSET_HOURS = 7  # WIB = UTC+7 (tanpa DST, jadi aman dihitung statis)
+
+
+def get_heatmap(days: int = 30, region: str = None):
+    """
+    Menghitung berapa kali tiap kombinasi (hari-dalam-minggu, jam) muncul
+    sesi live dimulai, dalam N hari terakhir -- dasar untuk heatmap
+    "jam & hari favorit live" kompetitor.
+
+    Waktu dikonversi ke WIB (UTC+7) supaya relevan untuk tim di Yogyakarta,
+    bukan ditampilkan dalam UTC yang membingungkan.
+
+    Return: list of {"day": 0-6 (Senin=0..Minggu=6), "hour": 0-23, "count": N}
+    Semua 168 kombinasi (7x24) selalu ada di hasil, termasuk yang count=0,
+    supaya frontend tidak perlu mengisi kekosongan sendiri.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    query = """
+        SELECT lh.started_at AS started_at
+        FROM live_history lh
+        LEFT JOIN account_status a ON a.username = lh.username
+        WHERE lh.started_at >= ?
+    """
+    params = [cutoff]
+
+    if region and region != "all":
+        query += " AND a.region = ?"
+        params.append(region)
+
+    # Inisialisasi semua 168 sel ke 0 dulu
+    counts = {(day, hour): 0 for day in range(7) for hour in range(24)}
+
+    with get_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+        for r in rows:
+            try:
+                dt_utc = datetime.fromisoformat(r["started_at"])
+                dt_wib = dt_utc + timedelta(hours=WIB_OFFSET_HOURS)
+                day = dt_wib.weekday()  # Senin=0 ... Minggu=6
+                hour = dt_wib.hour
+                counts[(day, hour)] += 1
+            except (ValueError, TypeError):
+                continue  # lewati baris dengan format waktu yang rusak
+
+    return [
+        {"day": day, "hour": hour, "count": count}
+        for (day, hour), count in sorted(counts.items())
+    ]
+
+
+def get_viewer_trend(username: str, limit: int = 200):
+    """
+    Data grafik Viewer Trend untuk SATU akun: rangkaian jumlah penonton
+    dari waktu ke waktu, untuk sesi live TERBARU (baik yang masih
+    berlangsung maupun yang sudah selesai).
+    """
+    with get_conn() as conn:
+        session = conn.execute("""
+            SELECT id, started_at, ended_at, peak_viewer_count
+            FROM live_history
+            WHERE username = ?
+            ORDER BY started_at DESC LIMIT 1
+        """, (username,)).fetchone()
+
+        if session is None:
+            return {"session": None, "snapshots": []}
+
+        rows = conn.execute("""
+            SELECT checked_at, viewer_count FROM viewer_snapshots
+            WHERE session_id = ?
+            ORDER BY checked_at ASC LIMIT ?
+        """, (session["id"], limit)).fetchall()
+
+        return {
+            "session": dict(session),
+            "snapshots": [dict(r) for r in rows],
+        }
+
+
+def get_insights(days: int = 7):
+    """
+    Hasilkan beberapa "insight" otomatis dari data yang sudah ada --
+    BUKAN lewat panggilan AI/LLM eksternal, murni aturan logika dari
+    angka-angka yang sudah tersimpan. Ini membuatnya cepat, gratis, dan
+    hasilnya selalu bisa dijelaskan/ditelusuri baliknya.
+    """
+    insights = {}
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=days)).isoformat()
+
+    with get_conn() as conn:
+        # 1. Performa tertinggi saat ini -- akun live dengan viewer_count tertinggi
+        top_live = conn.execute("""
+            SELECT username, viewer_count FROM account_status
+            WHERE is_live = 1 AND viewer_count IS NOT NULL
+            ORDER BY viewer_count DESC LIMIT 1
+        """).fetchone()
+        insights["top_performer"] = dict(top_live) if top_live else None
+
+        # 2. Viewer spike -- akun dengan pertumbuhan % tercepat dalam sesi
+        #    live yang SEDANG berlangsung (bandingkan snapshot pertama vs
+        #    terakhir dalam 20 menit terakhir).
+        spike_cutoff = (now - timedelta(minutes=20)).isoformat()
+        open_sessions = conn.execute("""
+            SELECT id, username FROM live_history WHERE ended_at IS NULL
+        """).fetchall()
+
+        best_spike = None
+        for s in open_sessions:
+            snaps = conn.execute("""
+                SELECT viewer_count, checked_at FROM viewer_snapshots
+                WHERE session_id = ? AND checked_at >= ?
+                ORDER BY checked_at ASC
+            """, (s["id"], spike_cutoff)).fetchall()
+            if len(snaps) < 2:
+                continue
+            first, last = snaps[0]["viewer_count"], snaps[-1]["viewer_count"]
+            if first <= 0:
+                continue
+            growth_pct = round(((last - first) / first) * 100)
+            if growth_pct > 0 and (best_spike is None or growth_pct > best_spike["growth_pct"]):
+                best_spike = {
+                    "username": s["username"],
+                    "from": first,
+                    "to": last,
+                    "growth_pct": growth_pct,
+                }
+        insights["viewer_spike"] = best_spike
+
+        # 3. Waktu optimal -- jam dengan total sesi live terbanyak (7 hari terakhir)
+        heatmap = get_heatmap(days=7, region="all")
+        best_hour_entry = max(heatmap, key=lambda h: h["count"], default=None)
+        if best_hour_entry and best_hour_entry["count"] > 0:
+            h = best_hour_entry["hour"]
+            insights["optimal_time"] = {
+                "hour_range": f"{h:02d}:00 - {(h+1)%24:02d}:00 WIB",
+                "session_count": best_hour_entry["count"],
+            }
+        else:
+            insights["optimal_time"] = None
+
+        # 4. Topik populer -- kata yang paling sering muncul di judul live
+        #    (di luar kata umum/stopword), plus rata-rata viewer sesi yang
+        #    mengandung kata itu dibanding rata-rata keseluruhan.
+        titles_rows = conn.execute("""
+            SELECT title, peak_viewer_count FROM live_history
+            WHERE started_at >= ? AND title IS NOT NULL AND title != ''
+        """, (cutoff,)).fetchall()
+
+        stopwords = {
+            "yang", "dan", "di", "ke", "dari", "untuk", "live", "ini", "itu",
+            "dengan", "saja", "ada", "juga", "akan", "kita", "kami", "the",
+            "a", "an", "to", "of", "in", "on", "for", "and", "is", "are"
+        }
+        word_stats = {}  # word -> {"count": n, "viewer_sum": n, "viewer_n": n}
+        for row in titles_rows:
+            words = [w.strip(".,!?()[]#@").lower() for w in row["title"].split()]
+            seen_in_title = set()
+            for w in words:
+                if len(w) < 3 or w in stopwords or w in seen_in_title:
+                    continue
+                seen_in_title.add(w)
+                stats = word_stats.setdefault(w, {"count": 0, "viewer_sum": 0, "viewer_n": 0})
+                stats["count"] += 1
+                if row["peak_viewer_count"] is not None:
+                    stats["viewer_sum"] += row["peak_viewer_count"]
+                    stats["viewer_n"] += 1
+
+        if word_stats:
+            top_word, top_stats = max(word_stats.items(), key=lambda kv: kv[1]["count"])
+            overall_avg = (
+                sum(r["peak_viewer_count"] for r in titles_rows if r["peak_viewer_count"] is not None)
+                / max(1, len([r for r in titles_rows if r["peak_viewer_count"] is not None]))
+            )
+            word_avg = top_stats["viewer_sum"] / top_stats["viewer_n"] if top_stats["viewer_n"] else None
+            diff_pct = round(((word_avg - overall_avg) / overall_avg) * 100) if (word_avg and overall_avg) else None
+            insights["popular_topic"] = {
+                "word": top_word,
+                "mention_count": top_stats["count"],
+                "avg_viewers_for_topic": round(word_avg) if word_avg else None,
+                "diff_pct_vs_overall": diff_pct,
+            }
+        else:
+            insights["popular_topic"] = None
+
+    return insights
