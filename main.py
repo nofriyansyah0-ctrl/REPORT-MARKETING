@@ -131,12 +131,12 @@ def get_history_all():
 
 
 @app.get("/api/history/{username}")
-def get_history_for_user(username: str):
+def get_history_for_user(username: str, limit: int = 50):
     accounts = load_accounts()
     usernames = [a["username"] for a in accounts]
     if username not in usernames:
         raise HTTPException(status_code=404, detail="Akun tidak ada di daftar pantauan")
-    return {"history": database.get_history(username=username)}
+    return {"history": database.get_history(username=username, limit=limit)}
 
 
 @app.get("/api/leaderboard")
@@ -148,6 +148,37 @@ def get_leaderboard(days: int = 7, region: str = "all"):
     if days not in (7, 30):
         raise HTTPException(status_code=400, detail="Parameter 'days' harus 7 atau 30")
     return {"leaderboard": database.get_leaderboard(days=days, region=region)}
+
+
+@app.get("/api/heatmap")
+def get_heatmap(days: int = 30, region: str = "all"):
+    """
+    Data heatmap jam & hari favorit live kompetitor, dalam N hari terakhir.
+    Query params: ?days=30&region=jogja (region opsional, default 'all')
+    """
+    if days not in (7, 30):
+        raise HTTPException(status_code=400, detail="Parameter 'days' harus 7 atau 30")
+    return {"heatmap": database.get_heatmap(days=days, region=region)}
+
+
+@app.get("/api/viewer-trend/{username}")
+def get_viewer_trend(username: str):
+    """
+    Grafik viewer trend untuk sesi live terbaru sebuah akun.
+    """
+    accounts = load_accounts()
+    usernames = [a["username"] for a in accounts]
+    if username not in usernames:
+        raise HTTPException(status_code=404, detail="Akun tidak ada di daftar pantauan")
+    return database.get_viewer_trend(username)
+
+
+@app.get("/api/insights")
+def get_insights(days: int = 7):
+    """
+    Insight otomatis berbasis aturan logika (bukan panggilan AI eksternal).
+    """
+    return {"insights": database.get_insights(days=days)}
 
 
 @app.post("/api/check-now")
