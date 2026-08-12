@@ -100,7 +100,7 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     database.init_db()
     scheduler.add_job(run_check_cycle, "interval", seconds=CHECK_INTERVAL_SECONDS,
-                       id="check_cycle", next_run_time=None)
+                       id="check_cycle")
     scheduler.start()
     # Jalankan satu kali langsung saat startup (jangan tunggu interval pertama)
     asyncio.create_task(run_check_cycle())
