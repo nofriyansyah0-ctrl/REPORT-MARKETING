@@ -29,7 +29,11 @@ from tiktok_checker import check_all_accounts
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("main")
 
-CHECK_INTERVAL_SECONDS = 90  # cek tiap 1.5 menit -- sesuaikan sesuai kebutuhan
+CHECK_INTERVAL_SECONDS = 180  # dinaikkan dari 90 -> 180 detik (3 menit) setelah
+                               # TikTok mulai membalas 403 Forbidden -- prioritas
+                               # sekarang memulihkan "reputasi" IP server, bukan
+                               # kecepatan update. Bisa diturunkan lagi nanti kalau
+                               # blokirnya sudah reda.
 
 ACCOUNTS_FILE = Path(__file__).parent / "accounts.json"
 
