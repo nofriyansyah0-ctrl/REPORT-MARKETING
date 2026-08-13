@@ -21,14 +21,15 @@ from TikTokLive import TikTokLiveClient
 logger = logging.getLogger("tiktok_checker")
 
 # Jeda antar pengecekan akun (detik), supaya tidak membombardir sekaligus.
-DELAY_BETWEEN_ACCOUNTS = 3
+# Dinaikkan lagi ke 5 detik -- pemulihan dari blokir 403 diprioritaskan.
+DELAY_BETWEEN_ACCOUNTS = 5
 
-# Berapa banyak akun dicek BERSAMAAN (paralel). DITURUNKAN dari 5 -> 2
-# setelah TikTok mulai membalas dengan 403 Forbidden (tanda IP server
-# mulai dicurigai/dibatasi). Lebih lambat, tapi jauh lebih "halus" di
-# mata TikTok -- prioritas sekarang adalah PULIH dari blokir, bukan
-# kecepatan.
-CONCURRENCY = 2
+# Berapa banyak akun dicek BERSAMAAN (paralel). DITURUNKAN lagi ke 1
+# (cek satu-satu berurutan, TIDAK paralel sama sekali) karena 403
+# Forbidden dari TikTok masih berlanjut meski sudah diturunkan ke 2.
+# Ini langkah paling konservatif -- prioritas total pemulihan blokir,
+# kecepatan update dikorbankan sementara.
+CONCURRENCY = 1
 
 # Kalau pengecekan sebuah akun gagal karena error tak dikenal (bukan
 # "offline" atau "tidak ditemukan" yang sudah pasti), coba ulang sekali
