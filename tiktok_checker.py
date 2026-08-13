@@ -21,22 +21,21 @@ from TikTokLive import TikTokLiveClient
 logger = logging.getLogger("tiktok_checker")
 
 # Jeda antar pengecekan akun (detik), supaya tidak membombardir sekaligus.
-# Dinaikkan dari 2 -> 3 detik karena dengan makin banyak akun (40+),
-# permintaan yang terlalu rapat mulai memicu error/rate-limit dari TikTok.
 DELAY_BETWEEN_ACCOUNTS = 3
 
-# Berapa banyak akun dicek BERSAMAAN (paralel). Semakin tinggi = siklus
-# lebih cepat, tapi juga makin "berisik" ke mata TikTok (potensi rate-limit
-# lebih tinggi). 5 adalah titik tengah yang cukup aman untuk skala puluhan
-# akun sambil tetap jauh lebih cepat dari cara berurutan sebelumnya.
-CONCURRENCY = 5
+# Berapa banyak akun dicek BERSAMAAN (paralel). DITURUNKAN dari 5 -> 2
+# setelah TikTok mulai membalas dengan 403 Forbidden (tanda IP server
+# mulai dicurigai/dibatasi). Lebih lambat, tapi jauh lebih "halus" di
+# mata TikTok -- prioritas sekarang adalah PULIH dari blokir, bukan
+# kecepatan.
+CONCURRENCY = 2
 
 # Kalau pengecekan sebuah akun gagal karena error tak dikenal (bukan
 # "offline" atau "tidak ditemukan" yang sudah pasti), coba ulang sekali
 # lagi sebelum benar-benar menyerah -- banyak kegagalan sifatnya cuma
 # gangguan sesaat (timeout, koneksi terputus), bukan masalah permanen.
 MAX_RETRIES = 2
-RETRY_DELAY = 4
+RETRY_DELAY = 6
 
 
 async def _check_once(username: str) -> dict:
@@ -135,12 +134,21 @@ async def _check_once(username: str) -> dict:
 async def check_single_account(username: str) -> dict:
     """
     Cek status live satu akun, dengan retry otomatis kalau gagal karena
-    error tak dikenal (bukan "offline" atau "tidak ditemukan" yang sudah
-    pasti -- itu tidak perlu diulang karena hasilnya sudah jelas).
+    error tak dikenal (bukan "offline"/"tidak ditemukan"/"kemungkinan
+    diblokir" yang sudah pasti -- itu tidak perlu diulang, karena
+    mengulang saat sedang diblokir cuma memperparah keadaan, bukan
+    membantu).
     """
     last_result = None
     for attempt in range(1, MAX_RETRIES + 1):
         result = await _check_once(username)
+
+        error = result["error"] or ""
+        looks_blocked = "expecting value" in error.lower() or "jsondecodeerror" in error.lower()
+        if looks_blocked:
+            result["error"] = "Kemungkinan diblokir sementara oleh TikTok (respons bukan JSON)"
+            logger.warning(f"[{username}] terindikasi diblokir TikTok -- tidak diulang")
+            return result  # tidak ada gunanya retry cepat saat sedang diblokir
 
         # Berhasil, atau errornya sudah pasti (bukan gangguan sesaat) -> selesai
         if result["error"] is None or result["error"] == "Username tidak ditemukan":
