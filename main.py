@@ -16,12 +16,14 @@ Endpoint:
 import asyncio
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, field_validator
 
 import database
 from tiktok_checker import check_all_accounts
@@ -38,14 +40,14 @@ CHECK_INTERVAL_SECONDS = 360  # dinaikkan lagi ke 360 detik (6 menit) --
 ACCOUNTS_FILE = Path(__file__).parent / "accounts.json"
 
 
-def load_accounts() -> list:
+def load_accounts_from_file() -> list:
     """
-    Baca daftar akun dari accounts.json.
-    Mendukung 2 format:
-    - Format baru (dengan region): [{"username": "...", "region": "jogja"}, ...]
-    - Format lama (list string saja): ["user1", "user2", ...] -> otomatis
-      dianggap region "jogja" supaya tetap kompatibel.
+    Baca daftar akun dari accounts.json -- HANYA dipakai untuk seed awal
+    (migrasi 1x ke database), bukan lagi sumber utama sehari-hari.
+    Mendukung 2 format lama untuk kompatibilitas seed.
     """
+    if not ACCOUNTS_FILE.exists():
+        return []
     with open(ACCOUNTS_FILE, "r") as f:
         raw = json.load(f)["accounts"]
 
@@ -59,6 +61,16 @@ def load_accounts() -> list:
                 "region": item.get("region", "jogja"),
             })
     return accounts
+
+
+def load_accounts() -> list:
+    """
+    Daftar akun yang dipantau -- SUMBER UTAMA sekarang adalah database
+    (tabel monitored_accounts), bukan lagi accounts.json. Ini supaya
+    tambah/hapus akun lewat dashboard tersimpan PERMANEN (di Volume),
+    tidak hilang saat redeploy seperti kalau ditulis ke file biasa.
+    """
+    return database.get_monitored_accounts()
 
 
 async def run_check_cycle():
@@ -103,6 +115,16 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
+
+    # Migrasi 1x: kalau tabel monitored_accounts masih kosong (fitur ini
+    # baru pertama kali aktif), isi dari accounts.json lama supaya daftar
+    # akun yang sudah dikelola selama ini tidak hilang.
+    seed = load_accounts_from_file()
+    if seed:
+        was_seeded = database.seed_monitored_accounts_if_empty(seed)
+        if was_seeded:
+            logger.info(f"Migrasi: {len(seed)} akun dipindahkan dari accounts.json ke database.")
+
     scheduler.add_job(run_check_cycle, "interval", seconds=CHECK_INTERVAL_SECONDS,
                        id="check_cycle")
     scheduler.start()
@@ -119,9 +141,59 @@ app = FastAPI(title="TikTok Live Competitor Monitor", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # ganti dengan domain Vercel spesifik saat production
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
+class NewAccountRequest(BaseModel):
+    username: str
+    region: str = "jogja"
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        v = v.strip().lstrip("@")
+        # Username TikTok: huruf, angka, titik, underscore, 2-24 karakter
+        if not re.match(r"^[a-zA-Z0-9._]{2,24}$", v):
+            raise ValueError(
+                "Username tidak valid. Gunakan huruf, angka, titik, atau "
+                "underscore saja (2-24 karakter), tanpa spasi atau @."
+            )
+        return v
+
+    @field_validator("region")
+    @classmethod
+    def validate_region(cls, v: str) -> str:
+        if v not in ("jogja", "luar_jogja"):
+            raise ValueError("Region harus 'jogja' atau 'luar_jogja'")
+        return v
+
+
+@app.get("/api/accounts")
+def list_accounts():
+    """Daftar akun yang sedang dipantau (dari database, bukan file lagi)."""
+    return {"accounts": database.get_monitored_accounts()}
+
+
+@app.post("/api/accounts")
+def create_account(payload: NewAccountRequest):
+    """Tambah akun baru ke daftar pantauan."""
+    added = database.add_monitored_account(payload.username, payload.region)
+    if not added:
+        raise HTTPException(status_code=409, detail=f"@{payload.username} sudah ada di daftar pantauan")
+    logger.info(f"Akun baru ditambahkan lewat dashboard: {payload.username} ({payload.region})")
+    return {"status": "added", "username": payload.username, "region": payload.region}
+
+
+@app.delete("/api/accounts/{username}")
+def delete_account(username: str):
+    """Hapus akun dari daftar pantauan (riwayat live tetap tersimpan)."""
+    removed = database.remove_monitored_account(username)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"@{username} tidak ditemukan di daftar pantauan")
+    logger.info(f"Akun dihapus lewat dashboard: {username}")
+    return {"status": "removed", "username": username}
 
 
 @app.get("/api/status")
