@@ -34,6 +34,13 @@ def init_db():
     """Buat tabel jika belum ada. Panggil sekali saat startup."""
     with get_conn() as conn:
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS monitored_accounts (
+                username TEXT PRIMARY KEY,
+                region TEXT NOT NULL DEFAULT 'jogja',
+                added_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS account_status (
                 username TEXT PRIMARY KEY,
                 region TEXT NOT NULL DEFAULT 'jogja',
@@ -445,3 +452,66 @@ def get_insights(days: int = 7):
             insights["popular_topic"] = None
 
     return insights
+
+
+def seed_monitored_accounts_if_empty(seed_accounts: list):
+    """
+    Kalau tabel monitored_accounts masih kosong (pertama kali fitur ini
+    aktif), isi dari daftar awal yang dikasih (biasanya dari accounts.json
+    lama) -- supaya daftar akun yang sudah dikelola selama ini TIDAK hilang
+    saat pindah dari file JSON ke database.
+
+    seed_accounts: list of {"username": ..., "region": ...}
+    """
+    with get_conn() as conn:
+        count = conn.execute("SELECT COUNT(*) AS c FROM monitored_accounts").fetchone()["c"]
+        if count > 0:
+            return False  # sudah ada isinya, tidak perlu seed lagi
+
+        now = datetime.now(timezone.utc).isoformat()
+        for acc in seed_accounts:
+            conn.execute("""
+                INSERT OR IGNORE INTO monitored_accounts (username, region, added_at)
+                VALUES (?, ?, ?)
+            """, (acc["username"], acc.get("region", "jogja"), now))
+        return True
+
+
+def get_monitored_accounts():
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT username, region, added_at FROM monitored_accounts
+            ORDER BY region, username
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_monitored_account(username: str, region: str = "jogja"):
+    """
+    Tambah akun baru ke daftar pantauan.
+    Return True kalau berhasil, False kalau username sudah ada.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM monitored_accounts WHERE username = ?", (username,)
+        ).fetchone()
+        if existing:
+            return False
+        conn.execute("""
+            INSERT INTO monitored_accounts (username, region, added_at)
+            VALUES (?, ?, ?)
+        """, (username, region, now))
+        return True
+
+
+def remove_monitored_account(username: str):
+    """
+    Hapus akun dari daftar pantauan. Riwayat live_history & viewer_snapshots
+    akun itu TETAP disimpan (tidak ikut terhapus) supaya data historis tidak
+    hilang kalau suatu saat akun itu ditambahkan lagi.
+    Return True kalau berhasil dihapus, False kalau username tidak ditemukan.
+    """
+    with get_conn() as conn:
+        cursor = conn.execute("DELETE FROM monitored_accounts WHERE username = ?", (username,))
+        return cursor.rowcount > 0
