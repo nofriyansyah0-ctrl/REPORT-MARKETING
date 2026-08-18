@@ -200,10 +200,18 @@ def touch_attempt(username: str, region: str, error_message: str):
 
 
 def get_all_status():
+    """
+    Status terkini SEMUA akun yang MASIH dipantau (ada di monitored_accounts).
+    Pakai INNER JOIN supaya akun yang sudah dihapus lewat 'Kelola Akun' otomatis
+    tidak muncul lagi di sini -- tanpa perlu menghapus baris account_status-nya
+    (data itu tetap dipakai untuk join region di Leaderboard/Heatmap).
+    """
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM account_status ORDER BY is_live DESC, username ASC"
-        ).fetchall()
+        rows = conn.execute("""
+            SELECT a.* FROM account_status a
+            INNER JOIN monitored_accounts m ON m.username = a.username
+            ORDER BY a.is_live DESC, a.username ASC
+        """).fetchall()
         return [dict(r) for r in rows]
 
 
