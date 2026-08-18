@@ -23,10 +23,12 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import database
 from tiktok_checker import check_all_accounts
+import export
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("main")
@@ -255,6 +257,26 @@ def get_insights(days: int = 7):
     Insight otomatis berbasis aturan logika (bukan panggilan AI eksternal).
     """
     return {"insights": database.get_insights(days=days)}
+
+
+@app.get("/api/export/excel")
+def export_excel(days: int = 7, region: str = "all"):
+    """
+    Generate laporan Excel (.xlsx) berisi ringkasan, status terkini,
+    leaderboard, dan riwayat live. File dibuat di memori (tidak disimpan
+    ke disk), langsung dikirim sebagai download.
+    """
+    if days not in (7, 30):
+        raise HTTPException(status_code=400, detail="Parameter 'days' harus 7 atau 30")
+
+    buffer = export.build_report(days=days, region=region)
+    filename = f"laporan-live-monitor-{days}hari.xlsx"
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/check-now")
